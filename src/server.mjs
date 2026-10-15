@@ -1,0 +1,217 @@
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
+import { database, transaction } from './db.mjs';
+import { providers } from './providers.mjs';
+import { commerce } from './commerce.mjs';
+import { savePhoto } from './media.mjs';
+import { passwordRecovery,emailProvider } from './password-reset.mjs';
+import { fiscalProvider,invoiceService } from './invoices.mjs';
+import { HttpError, requireThat, text, integer, email, postal, passwordHash, passwordMatches, roles, permissions, token, hash, now } from './security.mjs';
+export function configuration(env=process.env) {
+  const c={url:(env.APP_URL||'http://localhost:3000').replace(/\/$/,''),mode:env.COMMERCE_MODE||'demo',production:env.NODE_ENV==='production',reservationMinutes:Number(env.RESERVATION_MINUTES||30),storeName:env.STORE_NAME||'EDG Commerce',mpToken:env.MERCADO_PAGO_ACCESS_TOKEN,mpSecret:env.MERCADO_PAGO_WEBHOOK_SECRET,collectorId:env.MERCADO_PAGO_COLLECTOR_ID,meToken:env.MELHOR_ENVIO_TOKEN,meSecret:env.MELHOR_ENVIO_WEBHOOK_SECRET,meSandbox:env.MELHOR_ENVIO_SANDBOX!=='false',originPostal:env.ORIGIN_POSTAL_CODE,supportEmail:env.SUPPORT_EMAIL,shippingFrom:env.SHIPPING_FROM_JSON?JSON.parse(env.SHIPPING_FROM_JSON):null};
+  Object.assign(c,{resendKey:env.RESEND_API_KEY,emailFrom:env.EMAIL_FROM,emailKey:env.EMAIL_ENCRYPTION_KEY,nfeToken:env.FOCUS_NFE_TOKEN,nfeEnvironment:env.NFE_ENVIRONMENT||'homologation',nfeEmitter:env.NFE_EMITTER_JSON?JSON.parse(env.NFE_EMITTER_JSON):null,nfeDefaults:env.NFE_DEFAULTS_JSON?JSON.parse(env.NFE_DEFAULTS_JSON):null});
+  Object.assign(c,{paymentProvider:env.PAYMENT_PROVIDER||'infinitepay',infiniteHandle:env.INFINITEPAY_HANDLE,infiniteWebhookToken:env.INFINITEPAY_WEBHOOK_TOKEN});
+  requireThat(['infinitepay','mercadopago'].includes(c.paymentProvider),500,'PAYMENT_PROVIDER inválido.');
+  requireThat(!c.infiniteHandle || /^[A-Za-z0-9_-]{1,100}$/.test(c.infiniteHandle),500,'INFINITEPAY_HANDLE deve ser sua InfiniteTag sem $.');
+  requireThat(['homologation','production'].includes(c.nfeEnvironment),500,'NFE_ENVIRONMENT inválido.');
+  requireThat(!c.emailKey || /^[a-f0-9]{64}$/i.test(c.emailKey),500,'EMAIL_ENCRYPTION_KEY deve ter 32 bytes em hexadecimal.');
+  requireThat(['demo','catalog','live'].includes(c.mode),500,'COMMERCE_MODE deve ser demo, catalog ou live.');
+  requireThat(Number.isInteger(c.reservationMinutes) && c.reservationMinutes>=5 && c.reservationMinutes<=1440,500,'RESERVATION_MINUTES inválido.');
+  const u=new URL(c.url); requireThat(['http:','https:'].includes(u.protocol) && u.pathname==='/' && !u.search && !u.hash && !u.username && !u.password,500,'APP_URL deve ser uma origem HTTP válida.');
+  if(c.production) requireThat(u.protocol==='https:' && (c.mode==='catalog' || (c.mode==='live' && (c.paymentProvider==='infinitepay'?(c.infiniteHandle && c.infiniteWebhookToken?.length>=32):(c.mpToken && c.mpSecret && c.collectorId)) && c.meToken && c.originPostal && c.supportEmail && !c.meSandbox)),500,'Produção exige HTTPS e modo catalog ou modo live com credenciais completas.');
+  requireThat(['BRL','EUR'].includes(env.STORE_CURRENCY||'BRL'),500,'STORE_CURRENCY inválida.');
+  c.currency=env.STORE_CURRENCY||'BRL';
+  if(c.mode!=='catalog')requireThat(c.currency==='BRL',500,'Checkout em EUR aguarda integração europeia. Use modo catalog.');
+  return c;
+}
+export function createApp({db=database(),config=configuration(),provider=providers(config),mailer=emailProvider(config),fiscal=fiscalProvider(config),runtime='node'}={}) {
+  const shop=commerce(db,config,provider), buckets=new Map();
+  const recovery=passwordRecovery(db,config,mailer),invoices=invoiceService(db,config,fiscal,shop);
+  const get=(sql,...args)=>db.prepare(sql).get(...args), run=(sql,...args)=>db.prepare(sql).run(...args);
+  function limited(req,name,limit=30) {
+    const key=`${name}:${req.socket.remoteAddress}`, time=Date.now(); let bucket=buckets.get(key);
+    if(!bucket || bucket.until<time) {bucket={n:0,until:time+60000}; buckets.set(key,bucket);}
+    requireThat(++bucket.n<=limit,429,'Muitas tentativas. Aguarde um minuto.');
+    if(buckets.size>10000) for(const [key,b] of buckets) if(b.until<time) buckets.delete(key);
+  }
+  async function body(req) {
+    requireThat(String(req.headers['content-type']||'').split(';')[0]==='application/json',415,'Envie application/json.');
+    let size=0, chunks=[]; for await(const chunk of req) {size+=chunk.length; requireThat(size<=65536,413,'Solicitação muito grande.'); chunks.push(chunk);}
+    try {const b=JSON.parse(Buffer.concat(chunks).toString()); requireThat(b && typeof b==='object' && !Array.isArray(b),400,'JSON inválido.'); return b;}
+    catch(e) {if(e instanceof HttpError) throw e; throw new HttpError(400,'JSON inválido.');}
+  }
+  function session(req,required=true) {
+    const cookies=Object.fromEntries(String(req.headers.cookie||'').split(';').map(v=>v.trim().split('=')));
+    const s=cookies.edg_session?get('SELECT s.csrf,s.token,u.id,u.name,u.email,u.role,u.active FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>?',hash(cookies.edg_session),now()):null;
+    requireThat(!required || (s && s.active),401,'Entre na sua conta para continuar.');
+    return s?.active?s:null;
+  }
+  function allowed(user,permission) {requireThat(user && permissions[user.role]?.includes(permission),403,'Seu perfil não tem acesso a esta operação.');}
+  function publicUser(u) {return {id:u.id,name:u.name,email:u.email,role:u.role,permissions:permissions[u.role]};}
+  function cookie(value,maxAge) {return `edg_session=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${config.production?'; Secure':''}`;}
+  async function route(req,res,url) {
+    const path=url.pathname, method=req.method;
+    function sanitize(data) {
+      if(Array.isArray(data)) return data.map(sanitize);
+      if(!data || typeof data!=='object') return data;
+      const result=Object.fromEntries(Object.entries(data).map(([key,value])=>[key,sanitize(value)]));
+      if(result.items && result.payment_status) {
+        const viewer=session(req,false);
+        delete result.request_hash;delete result.idempotency_key;
+        if(!viewer || viewer.role==='customer') {
+          for(const key of ['payment_metadata','payment_id','preference_id','label_id','label_url','shipping_data']) delete result[key];
+        }
+        if(!viewer || !['admin','finance','inventory'].includes(viewer.role)) for(const item of result.items)delete item.cost;
+        if(!viewer || viewer.role==='customer')for(const item of result.items)delete item.fiscal;
+        result.invoice=invoices.get(result.id);
+      }
+      return result;
+    }
+    const respond=(data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(sanitize(data)));};
+    if(path==='/api/health' && method==='GET') return respond({status:'ok'});
+    if(path==='/api/config' && method==='GET') return respond({name:config.storeName,mode:config.mode,currency:config.currency||'BRL',checkout_enabled:config.mode!=='catalog',payment:config.paymentProvider==='infinitepay'?'InfinitePay':'Mercado Pago',payment_provider:config.paymentProvider||'mercadopago',automatic_refunds:config.mode==='demo'||config.paymentProvider!=='infinitepay',shipping:'Melhor Envio',fiscal_environment:config.mode==='demo'?'demo':config.nfeEnvironment,email_enabled:config.mode==='demo'||Boolean(config.resendKey&&config.emailFrom&&config.emailKey)});
+    if(path==='/api/products' && method==='GET') {shop.expire(); return respond(shop.products());}
+    if(path==='/api/auth/me' && method==='GET') {const u=session(req,false);return respond({user:u?publicUser(u):null,csrf:u?.csrf||null});}
+    if(config.mode==='catalog' && ((path.startsWith('/api/webhooks/')) || (method!=='GET' && (path.startsWith('/api/cart/') || path==='/api/shipping/quote' || path==='/api/checkout' || /^\/api\/orders\/[^/]+\/(demo-pay|payment|payment-check)$/.test(path)))))throw new HttpError(503,'Loja em preparação. Compras ainda não disponíveis.');
+    if(path==='/api/webhooks/infinitepay' && method==='POST'){
+      requireThat(config.mode==='live' && config.paymentProvider==='infinitepay',404,'Operação indisponível.');
+      limited(req,'infinitepay-webhook',120);provider.verifyInfiniteWebhook(url);
+      const input=await body(req);
+      try{await shop.confirmInfinitePayment(null,input.order_nsu,input);return respond({success:true,message:null});}
+      catch(error){if(!(error instanceof HttpError))throw error;return respond({success:false,message:error.message},400);}
+    }
+    if(path==='/api/webhooks/melhorenvio' && method==='POST') {
+      limited(req,'shipping-webhook',120); let size=0;const chunks=[];
+      for await(const chunk of req){size+=chunk.length;requireThat(size<=65536,413,'Solicitação muito grande.');chunks.push(chunk);}
+      const raw=Buffer.concat(chunks);provider.verifyShippingWebhook(req.headers,raw);
+      let payload;try{payload=JSON.parse(raw.toString());}catch{throw new HttpError(400,'JSON inválido.');}
+      requireThat(payload.event?.startsWith('order.') && payload.data?.id && payload.data?.status,400,'Evento inválido.');
+      // Eventos de etiquetas que não pertencem à loja são ignorados.
+      if(get('SELECT id FROM orders WHERE label_id=?',payload.data.id)) shop.applyTracking(payload.data.id,payload.data);
+      return respond({received:true});
+    }
+    if(path==='/api/webhooks/mercadopago'  && method==='POST') {
+      limited(req,'webhook',120); const id=provider.verifyWebhook(req.headers,url);
+      // A API do provedor é consultada; nunca confiar no status enviado pelo cliente.
+      const payment=await provider.payment(id); shop.applyPayment(payment); return respond({received:true});
+    }
+    const mutation=!['GET','HEAD'].includes(method);
+    if(mutation) {
+      requireThat(req.headers.origin===new URL(config.url).origin,403,'Origem não permitida.');
+      limited(req,'write',120);
+    }
+    if(path==='/api/auth/forgot-password' && method==='POST') {limited(req,'password-recovery',5);const b=await body(req);return respond(recovery.request(b.email));}
+    if(path==='/api/auth/reset-password' && method==='POST') {limited(req,'password-reset',10);const b=await body(req);await recovery.reset(b.token,b.password);res.setHeader('Set-Cookie',cookie('',0));return respond({ok:true});}
+    if(['/api/auth/register','/api/auth/login'].includes(path) && method==='POST') {
+      limited(req,'auth',10); const input=await body(req); const e=email(input.email); let u;
+      if(path.endsWith('register')) {
+        const name=text(input.name,'Nome',2,100), pwd=await passwordHash(input.password);
+        requireThat(!get('SELECT id FROM users WHERE email=?',e),409,'E-mail já cadastrado.');
+        const id=randomUUID(); run('INSERT INTO users(id,name,email,password,role,created_at) VALUES(?,?,?,?,?,?)',id,name,e,pwd,'customer',now());
+        u=get('SELECT * FROM users WHERE id=?',id);
+      } else {
+        u=get('SELECT * FROM users WHERE email=?',e);
+        // Derivação também para usuário inexistente para reduzir diferença de tempo.
+        const fallback='0123456789abcdef0123456789abcdef:'+ '00'.repeat(64);
+        const matches=await passwordMatches(input.password,u?.password||fallback);
+        requireThat(u?.active && matches,401,'E-mail ou senha incorretos.');
+      }
+      const raw=token(),csrf=token(); run('INSERT INTO sessions VALUES(?,?,?,?)',hash(raw),u.id,csrf,new Date(Date.now()+86400000).toISOString());
+      res.setHeader('Set-Cookie',cookie(raw,86400)); return respond({user:publicUser(u),csrf},path.endsWith('register')?201:200);
+    }
+    let match;
+    const user=session(req);
+    if(mutation) requireThat(req.headers['x-csrf-token']===user.csrf,403,'Sessão inválida. Atualize a página.');
+    if(path==='/api/auth/logout' && method==='POST') {run('DELETE FROM sessions WHERE token=?',user.token);res.setHeader('Set-Cookie',cookie('',0));return respond({ok:true});}
+    if(path==='/api/auth/password' && method==='POST') {
+      const b=await body(req),u=get('SELECT * FROM users WHERE id=?',user.id); requireThat(await passwordMatches(b.current_password,u.password),401,'Senha atual incorreta.');
+      const pwd=await passwordHash(b.password); transaction(db,()=>{run('UPDATE users SET password=? WHERE id=?',pwd,user.id);run('DELETE FROM sessions WHERE user_id=?',user.id);run('UPDATE password_resets SET used_at=? WHERE user_id=? AND used_at IS NULL',now(),user.id);run('DELETE FROM email_outbox WHERE user_id=? AND sent_at IS NULL',user.id);});res.setHeader('Set-Cookie',cookie('',0));return respond({ok:true});
+    }
+    if((match=path.match(/^\/api\/orders\/([^/]+)\/payment-check$/)) && method==='POST')return respond(await shop.confirmInfinitePayment(user,match[1],await body(req)));
+    if(path==='/api/cart' && method==='GET') return respond(shop.cart(user.id));
+    if((match=path.match(/^\/api\/cart\/([^/]+)$/)) && method==='PUT') {const b=await body(req);return respond(shop.setCart(user,match[1],b.quantity));}
+    if(path==='/api/shipping/quote' && method==='POST') {const b=await body(req);return respond(await shop.quote(user,postal(b.postal_code)));}
+    if(path==='/api/coupons/check' && method==='POST') {const b=await body(req);shop.expire();return respond(shop.coupons.calculate(user,shop.cart(user.id).subtotal,b.code));}
+    if(path==='/api/checkout' && method==='POST') return respond(await shop.checkout(user,await body(req),req.headers['idempotency-key']),201);
+    if(path==='/api/orders' && method==='GET') return respond(shop.listOrders(user));
+    if((match=path.match(/^\/api\/orders\/([^/]+)\/invoice\/(pdf|xml)$/)) && method==='GET'){const [_,id,kind]=match;shop.order(id,user,permissions[user.role]?.includes('orders'));const content=await invoices.download(id,kind);res.writeHead(200,{'Content-Type':kind==='pdf'?'application/pdf':'application/xml','Content-Disposition':`attachment; filename="nfe-${id}.${kind}"`,'Cache-Control':'no-store'});return res.end(content);}
+    if((match=path.match(/^\/api\/orders\/([^/]+)$/)) && method==='GET') return respond(shop.order(match[1],user));
+    if((match=path.match(/^\/api\/orders\/([^/]+)\/(cancel|demo-pay|payment)$/)) && method==='POST') {
+      const [_,id,action]=match;
+      return respond(action==='cancel'?shop.cancel(user,id):action==='demo-pay'?shop.demoPay(user,id):await shop.paymentLink(user,id));
+    }
+    requireThat(path.startsWith('/api/admin/'),404,'Rota não encontrada.');
+    if(path==='/api/admin/media' && method==='POST') {allowed(user,'catalog');let size=0;const chunks=[];for await(const c of req){size+=c.length;requireThat(size<=5*1024*1024,413,'A foto deve ter até 5 MB.');chunks.push(c);}const result=await savePhoto(db,user,Buffer.concat(chunks),String(req.headers['content-type']||'').split(';')[0]);shop.audit(user.id,'media.upload',result.id);return respond(result,201);}
+    if(path==='/api/admin/coupons' && method==='GET') {allowed(user,'coupons');return respond(shop.coupons.list());}
+    if(path==='/api/admin/coupons' && method==='POST') {allowed(user,'coupons');return respond(shop.coupons.save(user,await body(req)),201);}
+    if((match=path.match(/^\/api\/admin\/coupons\/([^/]+)$/)) && method==='PATCH') {allowed(user,'coupons');const b=await body(req);return respond(shop.coupons.toggle(user,match[1],b.active));}
+    if(path==='/api/admin/emails' && method==='GET') {allowed(user,'users');return respond(recovery.list());}
+    if(path==='/api/admin/invoices' && method==='GET') {allowed(user,'invoices');return respond(invoices.list());}
+    if((match=path.match(/^\/api\/admin\/orders\/([^/]+)\/invoice-preview$/)) && method==='GET') {allowed(user,'invoices');return respond(invoices.preview(user,match[1]));}
+    if((match=path.match(/^\/api\/admin\/orders\/([^/]+)\/invoice$/)) && method==='POST') {allowed(user,'invoices');const b=await body(req),id=match[1];return respond(b.action==='consult'?await invoices.consult(user,id):b.action==='cancel'?await invoices.cancel(user,id,b.reason):b.action==='emit'?await invoices.emit(user,id,b.fiscal||{}):(()=>{throw new HttpError(400,'Ação fiscal inválida.');})());}
+    if(path==='/api/admin/dashboard' && method==='GET') {allowed(user,'dashboard');return respond(shop.dashboard(user));}
+    if(path==='/api/admin/categories' && method==='GET') {allowed(user,'catalog');return respond(shop.categories());}
+    if(path==='/api/admin/categories' && method==='POST') {allowed(user,'catalog');return respond(shop.saveCategory(user,await body(req)),201);}
+    if(path==='/api/admin/products' && method==='GET') {allowed(user,'catalog');return respond(shop.products(true));}
+    if(path==='/api/admin/products' && method==='POST') {allowed(user,'catalog');return respond(shop.saveProduct(user,await body(req)),201);}
+    if((match=path.match(/^\/api\/admin\/products\/([^/]+)$/)) && method==='PUT') {allowed(user,'catalog');return respond(shop.saveProduct(user,await body(req),match[1]));}
+    if((match=path.match(/^\/api\/admin\/products\/([^/]+)\/stock$/)) && method==='POST') {allowed(user,'stock');const b=await body(req);return respond(shop.stock(user,match[1],b.delta,b.reason));}
+    if(path==='/api/admin/movements' && method==='GET') {allowed(user,'stock');return respond(shop.movements());}
+    if(path==='/api/admin/orders' && method==='GET') {allowed(user,'orders');return respond(shop.listOrders(user,true));}
+    if((match=path.match(/^\/api\/admin\/orders\/([^/]+)\/(status|cancel|refund|label|tracking)$/)) && method==='POST') {
+      const [_,id,action]=match; allowed(user,action==='refund'?'finance':'shipping');
+      if(action==='cancel') return respond(shop.cancel(user,id,true));
+      if(action==='refund') return respond(await shop.refund(user,id));
+      if(action==='tracking') return respond(await shop.syncTracking(user,id));
+      const b=await body(req);return respond(action==='label'?await shop.label(user,id,b.action,b):shop.status(user,id,b.status,b));
+    }
+    if(path==='/api/admin/finance' && method==='GET') {allowed(user,'finance');return respond(shop.ledger());}
+    if(path==='/api/admin/expenses' && method==='POST') {allowed(user,'finance');return respond(shop.expense(user,await body(req),req.headers['idempotency-key']),201);}
+    if(path==='/api/admin/audit' && method==='GET') {allowed(user,'audit');return respond(shop.audits());}
+    if(path==='/api/admin/users' && method==='GET') {allowed(user,'users');return respond(db.prepare('SELECT id,name,email,role,active,created_at FROM users ORDER BY created_at DESC LIMIT 200').all());}
+    if(path==='/api/admin/users' && method==='POST') {
+      allowed(user,'users'); const b=await body(req),e=email(b.email),name=text(b.name,'Nome',2,100),pwd=await passwordHash(b.password);
+      requireThat(roles.includes(b.role),400,'Perfil inválido.');requireThat(!get('SELECT id FROM users WHERE email=?',e),409,'E-mail já cadastrado.');
+      const id=randomUUID();run('INSERT INTO users(id,name,email,password,role,created_at) VALUES(?,?,?,?,?,?)',id,name,e,pwd,b.role,now());shop.audit(user.id,'user.create',id,{role:b.role});return respond({id,name,email:e,role:b.role},201);
+    }
+    if((match=path.match(/^\/api\/admin\/users\/([^/]+)$/)) && method==='PATCH') {
+      allowed(user,'users'); const b=await body(req),id=match[1];requireThat(roles.includes(b.role) && typeof b.active==='boolean',400,'Perfil ou situação inválidos.');
+      requireThat(id!==user.id,409,'Você não pode alterar seu próprio acesso.');requireThat(get('SELECT id FROM users WHERE id=?',id),404,'Usuário não encontrado.');
+      transaction(db,()=>{run('UPDATE users SET role=?,active=? WHERE id=?',b.role,b.active?1:0,id);run('DELETE FROM sessions WHERE user_id=?',id);run('UPDATE password_resets SET used_at=? WHERE user_id=? AND used_at IS NULL',now(),id);run('DELETE FROM email_outbox WHERE user_id=? AND sent_at IS NULL',id);shop.audit(user.id,'user.access',id,{role:b.role,active:b.active});});return respond({ok:true});
+    }
+    throw new HttpError(404,'Rota não encontrada.');
+  }
+  const handler=async(req,res)=>{
+    res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('X-Frame-Options','DENY');res.setHeader('Referrer-Policy','same-origin');
+    res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+    if(config.production) res.setHeader('Strict-Transport-Security','max-age=31536000');
+    try {
+      const url=new URL(req.url,config.url);
+      if(url.pathname.startsWith('/api/')) return await route(req,res,url);
+      requireThat(req.method==='GET' || req.method==='HEAD',405,'Método não permitido.');
+      if(/^\/media\/[a-f0-9]{64}\.jpg$/.test(url.pathname)){const id=url.pathname.slice(7,-4),photo=db.prepare('SELECT data FROM media WHERE id=?').get(id);requireThat(photo,404,'Foto não encontrada.');res.writeHead(200,{'Content-Type':'image/jpeg','Cache-Control':'public, max-age=31536000, immutable'});return res.end(req.method==='HEAD'?undefined:Buffer.from(photo.data));}
+      const files={'/':'index.html','/app.js':'app.js','/styles.css':'styles.css','/favicon.svg':'favicon.svg','/edg-logo.png':'edg-logo.png'};
+      const filename=files[url.pathname];requireThat(filename,404,'Página não encontrada.');
+      const content=await readFile(new URL(`../public/${filename}`,import.meta.url));
+      res.writeHead(200,{'Content-Type':filename.endsWith('html')?'text/html; charset=utf-8':filename.endsWith('css')?'text/css; charset=utf-8':filename.endsWith('js')?'text/javascript; charset=utf-8':filename.endsWith('png')?'image/png':'image/svg+xml','Cache-Control':'no-cache'});res.end(req.method==='HEAD'?undefined:content);
+    }catch(e) {
+      if(res.headersSent) return res.end();
+      const status=e instanceof HttpError?e.status:500;
+      if(status===500) console.error('Request failed:',e.name,e.code||'internal');
+      res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify({error:status===500?'Erro interno. Tente novamente.':e.message}));
+    }
+  };
+  if(runtime==='worker') return {handler,db,shop,recovery,invoices};
+  const server=createServer(handler);
+  server.requestTimeout=20000;server.headersTimeout=10000;
+  const maintenance=setInterval(()=>{try{shop.expire();recovery.flush().catch(()=>console.error('Email maintenance failed'));}catch(e){console.error('Reservation maintenance failed:',e.code||e.name);}},60000);maintenance.unref();
+  server.on('close',()=>clearInterval(maintenance));
+  return {server,db,shop,recovery,invoices};
+}
+if(import.meta.url && process.argv[1]===fileURLToPath(import.meta.url)) {
+  const app=createApp();app.shop.expire(); const port=Number(process.env.PORT||3000);
+  app.server.listen(port,process.env.HOST||'127.0.0.1',()=>console.log(`EDG Commerce em ${process.env.APP_URL||`http://localhost:${port}`}`));
+  for(const signal of ['SIGINT','SIGTERM']) process.on(signal,()=>app.server.close(()=>{app.db.close();process.exit(0);}));
+}

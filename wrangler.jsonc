@@ -1,0 +1,49 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "edg-br-ecommerce",
+  "main": "cloudflare/worker.mjs",
+  "compatibility_date": "2026-01-01",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": true,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "alias": {
+    "./db.mjs": "./cloudflare/database.mjs",
+    "./image-processor.mjs": "./cloudflare/image-processor.mjs"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "STORE",
+        "class_name": "CommerceStore"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "CommerceStore"
+      ]
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "*/5 * * * *"
+    ]
+  },
+  "vars": {
+    "COMMERCE_MODE": "catalog",
+    "STORE_NAME": "EDG Brasil",
+    "STORE_CURRENCY": "BRL",
+    "PAYMENT_PROVIDER": "infinitepay"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
