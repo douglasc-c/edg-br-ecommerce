@@ -47,7 +47,7 @@ export function safeLink(value) {
 }
 export const roles = ['customer','admin','inventory','finance','shipping','support'];
 export const permissions = {
-  admin:['dashboard','catalog','stock','orders','finance','shipping','users','audit','coupons','invoices'],
+  admin:['dashboard','catalog','stock','orders','finance','shipping','users','audit','coupons','invoices','integrations'],
   inventory:['dashboard','catalog','stock','orders'], finance:['dashboard','orders','finance','coupons','invoices'],
   shipping:['dashboard','orders','shipping'], support:['dashboard','orders'], customer:[]
 };

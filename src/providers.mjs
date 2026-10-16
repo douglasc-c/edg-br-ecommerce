@@ -1,7 +1,7 @@
 import { infinitepay } from './infinitepay.mjs';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { HttpError, requireThat, safeLink, allocateCents } from './security.mjs';
-export function providers(config, fetcher=fetch) {
+export function providers(config, fetcher=fetch, connection=null) {
   const demo=config.mode==='demo',ip=infinitepay(config,fetcher);
   const useInfinite=config.paymentProvider==='infinitepay';
   async function request(base,path,body,token,extra={},method='POST') {
@@ -11,7 +11,7 @@ export function providers(config, fetcher=fetch) {
     try {return await response.json();}catch {throw new HttpError(502,'Resposta inválida do provedor.');}
   }
   const mp=(path,body,extra={},method='POST')=>request('https://api.mercadopago.com',path,body,config.mpToken,extra,method);
-  const me=(path,body)=>request(config.meSandbox?'https://sandbox.melhorenvio.com.br':'https://www.melhorenvio.com.br','/api/v2/me'+path,body,config.meToken,{'User-Agent':`EDG Commerce (${config.supportEmail})`});
+  const me=async(path,body)=>request(config.meSandbox?'https://sandbox.melhorenvio.com.br':'https://www.melhorenvio.com.br','/api/v2/me'+path,body,connection?await connection.accessToken():config.meToken,{'User-Agent':`EDG Commerce (${config.supportEmail})`});
   return {
     demo,
     verifyInfiniteWebhook:ip.verifyNotification,
@@ -21,7 +21,7 @@ export function providers(config, fetcher=fetch) {
         {id:'demo-standard',name:'Entrega padrão · simulação',price:1990,days:7,packages:[]},
         {id:'demo-express',name:'Entrega expressa · simulação',price:3490,days:3,packages:[]}
       ];
-      requireThat(config.meToken && config.originPostal && config.supportEmail,503,'Configure Melhor Envio, e-mail de suporte e CEP de origem.');
+      requireThat((connection?connection.available():config.meToken) && config.originPostal && config.supportEmail,503,'Configure Melhor Envio, e-mail de suporte e CEP de origem.');
       const data=await me('/shipment/calculate',{from:{postal_code:config.originPostal},to:{postal_code:postalCode},products:items.map(p=>({id:p.id,width:p.width,height:p.height,length:p.length,weight:p.weight,insurance_value:p.price/100,quantity:p.quantity})),options:{receipt:false,own_hand:false}});
       requireThat(Array.isArray(data),502,'Resposta de cotação inválida.');
       return data.filter(q=>!q.error && Number.isFinite(Number(q.custom_price??q.price)) && Number(q.custom_price??q.price)>=0).map(q=>({id:String(q.id),name:`${q.company?.name||''} ${q.name}`.trim(),price:Math.round(Number(q.custom_price??q.price)*100),days:q.custom_delivery_time??q.delivery_time,packages:q.packages||[]}));

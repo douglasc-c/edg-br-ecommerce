@@ -35,7 +35,7 @@ export class CommerceStore extends DurableObject {
       });
     }catch(error){console.error('Commerce unavailable:',error.message);return Response.json({error:'Loja indisponível. Confira APP_URL, ADMIN_EMAIL e ADMIN_PASSWORD na configuração do Worker.'},{status:503});}
   }
-  async maintenance(){await this.initialize();this.app.shop.expire();await this.app.recovery.flush();}
+  async maintenance(){await this.initialize();this.app.shop.expire();await this.app.recovery.flush();await this.app.logistics.maintain();}
 }
 export default {
   async fetch(request,env){

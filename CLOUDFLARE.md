@@ -99,3 +99,76 @@ Após o código estar no GitHub, importe **douglasc-c/edg-br-ecommerce** em Work
 Adicione os secrets em Settings → Variables and Secrets. O `wrangler.jsonc` já define o nome do Worker, moeda, provedor, assets e binding persistente. Variáveis comuns devem permanecer nesse arquivo para não serem sobrescritas em deploys futuros.
 
 Não altere o nome do Worker, a classe `CommerceStore`, o binding `STORE` ou o identificador interno `primary` depois de cadastrar dados: isso pode apontar a aplicação para outro armazenamento. Atualizações normais preservam o banco. Nenhum dado ou secret da implantação europeia é copiado pelo repositório.
+
+## Conexão automática do Melhor Envio: OAuth + webhook
+
+Depois de publicar esta versão, abra **Gestão → Integrações** como administrador. Essa tela mostra as URLs exatas da sua implantação e o status da conexão. A autenticação fica disponível também em modo catálogo, antes de liberar vendas.
+
+O token pessoal configurado em `MELHOR_ENVIO_TOKEN` continua funcionando enquanto não houver conexão OAuth. Para receber os webhooks do aplicativo, cadastre/conecte um aplicativo do Melhor Envio. Um token pessoal ou “API key” isolado não substitui o **Client ID + Client Secret** desse aplicativo.
+
+### Cadastrar o aplicativo
+
+Em Melhor Envio → Integrações → Área Dev. → Cadastrar aplicativo:
+
+| Campo | Valor |
+| --- | --- |
+| Nome | EDG Brasil |
+| Site | A URL pública HTTPS da loja brasileira. |
+| URL de testes | A URL do ambiente de testes publicado; pode coincidir com o callback, conforme o formulário do Melhor Envio. |
+| URL de redirecionamento | Copie a URL de callback exibida em Gestão → Integrações. |
+
+O callback tem o formato:
+
+```text
+https://SUA-LOJA/api/integrations/melhorenvio/callback
+```
+
+Não acrescente `#integrations` ao callback cadastrado: o retorno ao painel é feito pelo servidor após concluir a autorização. Use exatamente a origem configurada em `APP_URL`.
+
+### Configurar credenciais no Cloudflare
+
+Cadastre como secrets:
+
+```bash
+npx wrangler secret put MELHOR_ENVIO_CLIENT_ID
+npx wrangler secret put MELHOR_ENVIO_CLIENT_SECRET
+npx wrangler secret put INTEGRATIONS_ENCRYPTION_KEY
+npx wrangler secret put SUPPORT_EMAIL
+```
+
+Use o ID e o secret fornecidos pelo cadastro do aplicativo. Para `INTEGRATIONS_ENCRYPTION_KEY`, gere localmente um valor com:
+
+```bash
+node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+```
+
+Guarde essa chave e mantenha o mesmo valor em atualizações. Ela criptografa os tokens no banco; perder ou alterar a chave exige reconectar as contas. Os segredos não são exibidos na interface e não devem ser colocados em commits ou enviados pelo chat.
+
+A assinatura do webhook usa o próprio `MELHOR_ENVIO_CLIENT_SECRET`. O antigo `MELHOR_ENVIO_WEBHOOK_SECRET` permanece como alternativa para implantações legadas sem credenciais OAuth; com OAuth configurado, prevalece o Client Secret real do aplicativo.
+
+O Worker usa produção por padrão (`MELHOR_ENVIO_SANDBOX=false` no `wrangler.jsonc`). Para testes sandbox, altere para `true` e use um aplicativo criado no sandbox. Tokens e autorizações de produção e sandbox são separados. Não altere o ambiente de uma loja com vendas reais para testar.
+
+### Autorizar a conta
+
+1. Entre na loja como administrador e abra **Gestão → Integrações**.
+2. Confira o ambiente e clique em **Conectar Melhor Envio**.
+3. Autorize sua conta na página oficial do Melhor Envio.
+4. Aguarde o retorno ao painel e confira o status **Conectado**.
+
+O sistema solicita apenas `cart-read`, `cart-write`, `shipping-calculate`, `shipping-checkout`, `shipping-generate`, `shipping-print` e `shipping-tracking`. A compra de fretes usa saldo da carteira e continua sendo uma ação explícita na expedição.
+
+A aplicação guarda os tokens criptografados em seu SQLite persistente e os renova automaticamente antes do vencimento, tanto nas requisições quanto na manutenção agendada. Uma autorização recusada ou revogada pode exigir nova conexão pelo administrador. Desconectar apaga os tokens locais e impede retornar silenciosamente ao token pessoal; para revogar o acesso no provedor, remova a autorização também no Melhor Envio.
+
+### Cadastrar as notificações
+
+No aplicativo do Melhor Envio, clique em **Novo Webhook** e cole a URL exibida no painel da EDG Brasil:
+
+```text
+https://SUA-LOJA/api/webhooks/melhorenvio
+```
+
+Selecione os eventos de atualização de etiquetas disponíveis. O sistema valida `X-ME-Signature` com HMAC-SHA256 sobre o corpo original da requisição, registra os eventos processados e ignora repetições idênticas. Notificações de etiquetas desconhecidas são ignoradas. Eventos antigos não fazem uma entrega concluída regredir nem sobrescrevem seu código/link de rastreio.
+
+As etiquetas precisam ser criadas pelo mesmo aplicativo conectado. Etiquetas criadas pelo site do Melhor Envio ou por outro aplicativo não geram notificações para este webhook. Para os pedidos existentes, continua disponível **Consultar transportadora**. O painel mostra a última notificação válida processada para uma etiqueta da loja, e não confirma automaticamente se a URL já foi cadastrada no provedor.
+
+Referências oficiais: [OAuth e autenticação](https://docs.melhorenvio.com.br/docs/autenticacao), [solicitar e renovar tokens](https://docs.melhorenvio.com.br/reference/solicitacao-do-token), [webhooks](https://docs.melhorenvio.com.br/docs/webhooks).

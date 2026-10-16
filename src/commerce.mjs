@@ -99,8 +99,7 @@ export function commerce(db,config,provider) {
       return order(o.id);
     });
   }
-  function applyTracking(labelId,data) {
-    return transaction(db,()=>{
+  function updateTracking(labelId,data) {
       const o=one('SELECT * FROM orders WHERE label_id=?',labelId);
       requireThat(o,404,'Etiqueta não encontrada.');
       const raw=typeof data.status==='string'?data.status.toLowerCase():'unknown';
@@ -112,19 +111,33 @@ export function commerce(db,config,provider) {
         if(raw==='posted' && ['paid','picking','ready'].includes(status)) status='shipped';
         if(raw==='delivered' && ['paid','picking','ready','shipped'].includes(status)) status='delivered';
       }
-      const tracking=typeof data.tracking==='string'?data.tracking.slice(0,100):o.tracking_code;
+      let tracking=typeof data.tracking==='string'?data.tracking.slice(0,100):o.tracking_code;
       let link=o.tracking_url; if(data.tracking_url) {try{link=safeLink(data.tracking_url);}catch{}}
       const incomingRank={created:0,pending:0,released:1,generated:2,received:3,posted:4,delivered:5};
       const oldRank=incomingRank[previous?.status]??-1,newRank=incomingRank[raw]??-1;
       const summary={status:raw,label:labels[raw]||'Atualização da transportadora',tracking,updated_at:now()};
-      const keepPrevious=oldRank>newRank && newRank>=0;
+      const keepPrevious=(oldRank>newRank && newRank>=0) || (o.status==='delivered' && raw!=='delivered');
+      if(keepPrevious){tracking=o.tracking_code;link=o.tracking_url;}
       run('UPDATE orders SET status=?,tracking_code=?,tracking_url=?,shipping_data=?,updated_at=? WHERE id=?',status,tracking,link,JSON.stringify(keepPrevious?previous:summary),now(),o.id);
       if(!keepPrevious && previous?.status!==raw) event(o.id,status,summary.label);
       return order(o.id);
+  }
+  function applyTracking(labelId,data){return transaction(db,()=>updateTracking(labelId,data));}
+  function receiveTracking(payload,eventHash,environment){
+    const label=text(payload.data?.id,'Etiqueta',1,100);
+    const statuses=['created','pending','released','generated','received','posted','delivered','cancelled','undelivered','paused','suspended'];
+    requireThat(typeof payload.event==='string' && payload.event.startsWith('order.') && statuses.includes(payload.data?.status),400,'Evento de envio inválido.');
+    return transaction(db,()=>{
+      const key=environment+':'+eventHash;
+      if(one('SELECT id FROM integration_webhooks WHERE id=?',key))return {duplicate:true};
+      const o=one('SELECT id FROM orders WHERE label_id=?',label);if(!o)return {ignored:true};
+      updateTracking(label,payload.data);
+      run("INSERT INTO integration_webhooks VALUES(?,'melhorenvio',?,?,?,?)",key,environment,o.id,payload.event,now());
+      return {duplicate:false};
     });
   }
   return {
-    audit, expire, applyPayment, applyTracking, order, coupons:discounts,
+    audit, expire, applyPayment, applyTracking, receiveTracking, order, coupons:discounts,
     products(admin=false) {return admin?all('SELECT *,stock-reserved available FROM products ORDER BY created_at DESC'):all('SELECT * FROM products WHERE active=1 ORDER BY created_at DESC').map(publicProduct);},
     cart,
     setCart(user,id,quantity) {
