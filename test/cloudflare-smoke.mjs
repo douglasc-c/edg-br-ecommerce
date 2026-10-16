@@ -42,13 +42,19 @@ try{
   await mf.dispose();
   let confirmedTotal=0;
   const webhookToken='b'.repeat(64);
-  mf=create({...options,bindings:{...options.bindings,COMMERCE_MODE:'live',PAYMENT_PROVIDER:'infinitepay',INFINITEPAY_HANDLE:'edg-br-test',INFINITEPAY_WEBHOOK_TOKEN:webhookToken,MELHOR_ENVIO_TOKEN:'mock',MELHOR_ENVIO_SANDBOX:'false',ORIGIN_POSTAL_CODE:'80010000',SUPPORT_EMAIL:'support@example.test'},outboundService:async request=>{
+  mf=create({...options,bindings:{...options.bindings,COMMERCE_MODE:'live',PAYMENT_PROVIDER:'infinitepay',INFINITEPAY_HANDLE:'edg-br-test',INFINITEPAY_WEBHOOK_TOKEN:webhookToken,MELHOR_ENVIO_CLIENT_ID:'1234',MELHOR_ENVIO_CLIENT_SECRET:'workers-oauth-secret',INTEGRATIONS_ENCRYPTION_KEY:'a'.repeat(64),MELHOR_ENVIO_SANDBOX:'false',ORIGIN_POSTAL_CODE:'80010000',SUPPORT_EMAIL:'support@example.test'},outboundService:async request=>{
     const url=new URL(request.url);
-    if(url.hostname==='www.melhorenvio.com.br')return Response.json([{id:1,name:'PAC',price:'19.90',delivery_time:7}]);
+    if(url.origin==='https://melhorenvio.com.br' && url.pathname==='/oauth/token')return Response.json({token_type:'Bearer',access_token:'workers-access-token',refresh_token:'workers-refresh-token',expires_in:2592000});
+    if(url.hostname==='www.melhorenvio.com.br'){assert.equal(request.headers.get('authorization'),'Bearer workers-access-token');return Response.json([{id:1,name:'PAC',price:'19.90',delivery_time:7}]);}
     if(url.origin==='https://api.checkout.infinitepay.io' && url.pathname==='/links')return Response.json({url:'https://checkout.infinitepay.com.br/edg-br-test?lenc=test'});
     if(url.origin==='https://api.checkout.infinitepay.io' && url.pathname==='/payment_check')return Response.json({success:true,paid:true,amount:confirmedTotal,paid_amount:confirmedTotal,installments:1,capture_method:'pix'});
     throw new Error('Unexpected external call '+url.origin);
   }});
+  const connect=await call('/api/admin/integrations/melhorenvio/connect','POST',{});assert.equal(connect.r.status,200,JSON.stringify(connect.data));
+  const oauthState=new URL(connect.data.url).searchParams.get('state');
+  const oauthCookie=connect.r.headers.get('set-cookie').split(';')[0];
+  const callback=await mf.dispatchFetch(origin+'/api/integrations/melhorenvio/callback?'+new URLSearchParams({code:'worker-code',state:oauthState}),{redirect:'manual',headers:{Cookie:oauthCookie}});
+  assert.equal(callback.status,303);assert.equal((await call('/api/admin/integrations/melhorenvio')).data.connected,true);
   assert.equal((await call(`/api/cart/${id}`,'PUT',{quantity:1})).r.status,200);
   const quote=(await call('/api/shipping/quote','POST',{postal_code:'80010000'})).data;
   const order=(await call('/api/checkout','POST',{quote_id:quote.id,service_id:quote.options[0].id,address:{name:'Admin',phone:'41999999999',document:'12345678901',postal_code:'80010000',street:'Rua A',number:'10',district:'Centro',city:'Curitiba',state:'PR'}},{'Idempotency-Key':'workers-infinitepay-test-order'})).data;
@@ -58,5 +64,5 @@ try{
   for(let i=0;i<2;i++)assert.equal((await call('/api/webhooks/infinitepay?token='+webhookToken,'POST',payload)).r.status,200);
   assert.equal((await call('/api/products')).data[0].available,11);
   assert.equal((await call('/api/admin/finance')).data.length,1);
-  console.log('Workers: catálogo, fotos, persistência, checkout InfinitePay e webhook idempotente aprovados (APIs externas simuladas).');
+  console.log('Workers: catálogo, fotos, persistência, checkout InfinitePay, OAuth Melhor Envio e webhook idempotente aprovados (APIs externas simuladas).');
 }finally{if(mf)await mf.dispose();await rm(directory,{recursive:true,force:true});}

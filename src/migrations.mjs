@@ -48,11 +48,33 @@ function migrateV3(db) {
   try{apply();db.exec('COMMIT');}catch(error){db.exec('ROLLBACK');throw error;}
 }
 
-export function migrate(db){
+function migrateV4(db){
   migrateV3(db);
   const apply=()=>{
     if(db.prepare('SELECT MAX(version) v FROM schema_version').get().v>=4)return;
     db.exec("ALTER TABLE orders ADD COLUMN payment_provider TEXT NOT NULL DEFAULT 'mercadopago'; ALTER TABLE orders ADD COLUMN payment_metadata TEXT NOT NULL DEFAULT '{}'; INSERT INTO schema_version VALUES(4);");
+  };
+  if(db.transactionSync)return db.transactionSync(apply);
+  db.exec('BEGIN IMMEDIATE');try{apply();db.exec('COMMIT');}catch(error){db.exec('ROLLBACK');throw error;}
+}
+
+export function migrate(db){
+  migrateV4(db);
+  const apply=()=>{
+    if(db.prepare('SELECT MAX(version) v FROM schema_version').get().v>=5)return;
+    db.exec(`
+      CREATE TABLE integration_oauth_states(state_hash TEXT PRIMARY KEY,browser_hash TEXT NOT NULL,
+        session_token TEXT NOT NULL REFERENCES sessions(token) ON DELETE CASCADE,actor_id TEXT NOT NULL REFERENCES users(id),
+        expires_at TEXT NOT NULL,environment TEXT NOT NULL,client_id TEXT NOT NULL,redirect_uri TEXT NOT NULL,created_at TEXT NOT NULL);
+      CREATE TABLE integration_connections(provider TEXT NOT NULL,environment TEXT NOT NULL,client_id TEXT NOT NULL,
+        encrypted TEXT NOT NULL,expires_at TEXT NOT NULL,connected_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+        actor_id TEXT NOT NULL REFERENCES users(id),status TEXT NOT NULL DEFAULT 'connected',last_error TEXT,
+        PRIMARY KEY(provider,environment));
+      CREATE TABLE integration_webhooks(id TEXT PRIMARY KEY,provider TEXT NOT NULL,environment TEXT NOT NULL,
+        order_id TEXT NOT NULL REFERENCES orders(id),event TEXT NOT NULL,received_at TEXT NOT NULL);
+      CREATE INDEX idx_integration_webhooks_time ON integration_webhooks(provider,environment,received_at);
+      INSERT INTO schema_version VALUES(5);
+    `);
   };
   if(db.transactionSync)return db.transactionSync(apply);
   db.exec('BEGIN IMMEDIATE');try{apply();db.exec('COMMIT');}catch(error){db.exec('ROLLBACK');throw error;}

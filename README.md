@@ -10,6 +10,8 @@ Versão brasileira da base `douglasc-c/edg-ecommerce` (commit `1fa687e`), com ch
 - Usuários com perfis de administrador, estoque, financeiro, expedição e atendimento.
 - Checkout InfinitePay com produtos, descontos e frete calculados no servidor.
 - Confirmação de pagamento pela API InfinitePay, por webhook ou retorno do comprador.
+- Conexão OAuth do Melhor Envio pelo painel, renovação automática e tokens criptografados.
+- Webhooks de envio com validação de assinatura, deduplicação e proteção contra regressão de rastreio.
 - Fretes e etiquetas pelo Melhor Envio; NF-e por Focus NFe; recuperação de senha por Resend.
 - SQLite persistente em Durable Object e assets no Cloudflare; servidor Node também disponível.
 

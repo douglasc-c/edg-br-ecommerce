@@ -41,7 +41,8 @@
     "COMMERCE_MODE": "catalog",
     "STORE_NAME": "EDG Brasil",
     "STORE_CURRENCY": "BRL",
-    "PAYMENT_PROVIDER": "infinitepay"
+    "PAYMENT_PROVIDER": "infinitepay",
+    "MELHOR_ENVIO_SANDBOX": "false"
   },
   "observability": {
     "enabled": true
