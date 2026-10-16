@@ -25,8 +25,9 @@ export class CommerceStore extends DurableObject {
   }
   async fetch(request){
     try{
-      // Serialize first-time bootstrap, including asynchronous password derivation.
-      await this.ctx.blockConcurrencyWhile(()=>this.initialize());
+      // initialize() shares one promise across requests. A rejected
+      // blockConcurrencyWhile callback would reset the object before JSON is sent.
+      await this.initialize();
       return await new Promise((resolve,reject)=>{
         const headers=new Headers();let status=200;
         const response={headersSent:false,setHeader(k,v){headers.set(k,v);},writeHead(code,values){status=code;for(const [k,v] of Object.entries(values))headers.set(k,v);this.headersSent=true;},end(content){resolve(new Response(request.method==='HEAD'?null:content??null,{status,headers}));}};
@@ -40,7 +41,13 @@ export class CommerceStore extends DurableObject {
 export default {
   async fetch(request,env){
     const path=new URL(request.url).pathname;
-    if(path.startsWith('/api/') || path.startsWith('/media/'))return env.STORE.getByName('primary').fetch(request);
+    if(path.startsWith('/api/') || path.startsWith('/media/')){
+      try{return await env.STORE.getByName('primary').fetch(request);}
+      catch(error){
+        console.error('Commerce request failed:',error.message);
+        return Response.json({error:'Loja indisponível. Confira a configuração e os logs do Worker no Cloudflare.'},{status:503,headers:{'Cache-Control':'no-store'}});
+      }
+    }
     const response=await env.ASSETS.fetch(request);
     const headers=new Headers(response.headers);
     headers.set('X-Content-Type-Options','nosniff');headers.set('X-Frame-Options','DENY');

@@ -16,6 +16,7 @@ const empty=(title,description='')=>`<div class="empty"><strong>${escape(title)}
 function toast(message,error=false){const t=$('#toast');t.textContent=message;t.className=`show${error?' error':''}`;clearTimeout(toast.timer);toast.timer=setTimeout(()=>t.className='',6000);}
 async function api(path,options={}) {
   const response=await fetch(`/api${path}`,{credentials:'same-origin',...options,headers:{'Content-Type':'application/json',...(state.csrf?{'X-CSRF-Token':state.csrf}:{}),...options.headers},...(options.body?{body:JSON.stringify(options.body)}:{})});
+  if(!response.headers.get('content-type')?.includes('application/json'))throw new Error(`A API da loja está indisponível (HTTP ${response.status}). Confira a configuração e os logs do Worker no Cloudflare.`);
   const result=await response.json(); if(!response.ok) throw new Error(result.error||'Não foi possível concluir.');return result;
 }
 function dialog(title,content){const d=$('#dialog');d.innerHTML=`<div class="dialog-head"><h2 id="dialog-title">${escape(title)}</h2><button class="icon-btn" data-action="close" aria-label="Fechar">×</button></div><div class="dialog-body">${content}</div>`;if(!d.open)d.showModal();}
