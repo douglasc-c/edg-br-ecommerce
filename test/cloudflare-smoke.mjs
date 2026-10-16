@@ -16,6 +16,20 @@ try{
     bindings:{APP_URL:origin,COMMERCE_MODE:'catalog',STORE_CURRENCY:'BRL',ADMIN_EMAIL:'admin@example.test',ADMIN_PASSWORD:password},
     serviceBindings:{ASSETS:async request=>new Response(await readFile(resolve('public',new URL(request.url).pathname==='/'?'index.html':new URL(request.url).pathname.slice(1))))}};
   const create=opts=>new Miniflare({...convertV4MiniflareOptions(opts),resourcePersistencePath:join(directory,"storage")});
+  // Missing deployment configuration must return JSON, never reset the object (1101).
+  mf=create({...options,bindings:{...options.bindings,APP_URL:''}});
+  for(let attempt=0;attempt<2;attempt++){
+    const unavailable=await mf.dispatchFetch(origin+'/api/config');
+    assert.equal(unavailable.status,503);
+    assert.match(unavailable.headers.get('content-type'),/application\/json/);
+    assert.match((await unavailable.json()).error,/APP_URL/);
+  }
+  await mf.dispose();
+  mf=create({...options,bindings:{...options.bindings,ADMIN_PASSWORD:''}});
+  const missingAdmin=await mf.dispatchFetch(origin+'/api/config');
+  assert.equal(missingAdmin.status,503);
+  assert.match((await missingAdmin.json()).error,/ADMIN_PASSWORD/);
+  await mf.dispose();
   mf=create(options);
   let auth={};
   async function call(path,method='GET',body,headers={}){

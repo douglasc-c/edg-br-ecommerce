@@ -30,6 +30,17 @@ Abra a loja para criar o administrador no primeiro acesso. Entre e abra **Gestã
 
 Depois de confirmar o acesso, pode remover o secret inicial com `npx wrangler secret delete ADMIN_PASSWORD`. A conta permanece no banco; mudanças nesse secret não redefinem uma senha existente. Use Minha conta para trocar a senha.
 
+## Se a loja não iniciar
+
+Se aparecer `Unexpected token '<'` ou erro 1101, abra `/api/config` no mesmo endereço da loja. A API deve responder JSON. Verifique em **Workers & Pages → edg-br-ecommerce → Settings → Variables and Secrets**:
+
+- `APP_URL`: `https://edg-br-ecommerce.douglas-camargo-ltda.workers.dev` para esta implantação, sem caminhos adicionais.
+- `ADMIN_EMAIL`: seu e-mail de administrador.
+- `ADMIN_PASSWORD`: senha inicial de 12 a 128 caracteres, necessária até o primeiro acesso bem-sucedido.
+- `COMMERCE_MODE`: mantenha `catalog` enquanto prepara o estoque e as integrações.
+
+Salve/publique as alterações e consulte os logs do Worker se o erro continuar. O catálogo não exige credenciais de pagamento ou frete. Falhas de configuração devem retornar HTTP 503 em JSON; erros de inicialização também ficam registrados nos logs. Não recrie o armazenamento para corrigir uma configuração.
+
 ## Ativar InfinitePay e frete real
 
 1. Na sua conta InfinitePay, habilite **Checkout Integrado**.
