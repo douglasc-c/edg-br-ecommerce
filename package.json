@@ -11,12 +11,13 @@
     "dev": "node --env-file-if-exists=.env --watch src/server.mjs",
     "seed": "node --env-file-if-exists=.env src/seed.mjs",
     "test": "node --test test/*.test.mjs",
-    "check": "node --check src/server.mjs && node --check public/app.js",
+    "check": "node --check src/server.mjs && node --check public/app.js && node --check public/skate.js && node --check public/music.js && node --check public/i18n.js && node --check public/i18n-common.js && node --check public/i18n-editorial.js && node --check src/language.mjs && node --check src/brazil-legal.mjs && node --check src/customer-requests.mjs",
     "test:ui": "playwright test",
     "dev:cloudflare": "wrangler dev",
     "deploy": "wrangler deploy",
     "check:cloudflare": "wrangler deploy --dry-run",
-    "test:cloudflare": "node test/cloudflare-smoke.mjs"
+    "test:cloudflare": "node test/cloudflare-smoke.mjs",
+    "test:cloudflare:payments": "node test/cloudflare-isolation.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.64.0",

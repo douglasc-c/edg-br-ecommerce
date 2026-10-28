@@ -6,7 +6,7 @@ import {configuration,createApp} from '../src/server.mjs';
 import {commerce} from '../src/commerce.mjs';
 import {providers} from '../src/providers.mjs';
 import {passwordHash,now} from '../src/security.mjs';
-const environment={NODE_ENV:'production',APP_URL:'https://br.example.test',COMMERCE_MODE:'live',PAYMENT_PROVIDER:'infinitepay',STORE_CURRENCY:'BRL',INFINITEPAY_HANDLE:'edg-br',INFINITEPAY_WEBHOOK_TOKEN:'a'.repeat(64),MELHOR_ENVIO_TOKEN:'shipping-test',MELHOR_ENVIO_SANDBOX:'false',ORIGIN_POSTAL_CODE:'80010000',SUPPORT_EMAIL:'suporte@example.test'};
+const environment={STORE_LEGAL_NAME:'Fornecedor de teste',STORE_DOCUMENT:'00000000000000',STORE_ADDRESS:'Endereço de teste sem operação real',NODE_ENV:'production',APP_URL:'https://br.example.test',COMMERCE_MODE:'live',PAYMENT_PROVIDER:'infinitepay',STORE_CURRENCY:'BRL',INFINITEPAY_HANDLE:'edg-br',INFINITEPAY_WEBHOOK_TOKEN:'a'.repeat(64),MELHOR_ENVIO_TOKEN:'shipping-test',MELHOR_ENVIO_SANDBOX:'false',ORIGIN_POSTAL_CODE:'80010000',SUPPORT_EMAIL:'suporte@example.test'};
 const destination={name:'Cliente BR',phone:'41999999999',document:'12345678901',postal_code:'80010000',street:'Rua A',number:'10',district:'Centro',city:'Curitiba',state:'PR'};
 function fixture(t){
  const db=database(':memory:');t.after(()=>db.close());const config=configuration(environment),calls=[];
@@ -22,7 +22,7 @@ function fixture(t){
  for(const [key,role] of [['user','customer'],['admin','admin']]){f[key]={id:randomUUID(),name:key,email:key+'@example.test',role};const u=f[key];db.prepare('INSERT INTO users(id,name,email,password,role,created_at) VALUES(?,?,?,?,?,?)').run(u.id,u.name,u.email,'unused',u.role,now());}
  f.p=f.shop.saveProduct(f.admin,{sku:'BR-001',name:'Produto Brasil',description:'Estoque brasileiro',category:'Teste',price:10001,cost:4000,low_stock:2,weight:.5,width:10,height:10,length:10,color:'#d9e4d5',icon:'◇'});f.shop.stock(f.admin,f.p.id,10,'Saldo inicial');
  f.stock=()=>({...db.prepare('SELECT stock,reserved FROM products WHERE id=?').get(f.p.id)});
- f.buy=async(quantity=2,coupon)=>{f.shop.setCart(f.user,f.p.id,quantity);const q=await f.shop.quote(f.user,destination.postal_code);return f.shop.checkout(f.user,{quote_id:q.id,service_id:q.options[0].id,address:destination,coupon},randomUUID());};
+ f.buy=async(quantity=2,coupon)=>{f.shop.setCart(f.user,f.p.id,quantity);const q=await f.shop.quote(f.user,destination.postal_code);return f.shop.checkout(f.user,{quote_id:q.id,service_id:q.options[0].id,address:destination,coupon,terms_accepted:true},randomUUID());};
  f.approve=o=>{f.result={success:true,paid:true,amount:o.total,paid_amount:o.total+10,installments:1,capture_method:'pix'};};
  return f;
 }

@@ -1,10 +1,18 @@
 # EDG Brasil — estoque e e-commerce
 
-Versão brasileira da base `douglasc-c/edg-ecommerce` (commit `1fa687e`), com checkout **InfinitePay**, moeda **BRL**, NF-e brasileira e configuração própria para Cloudflare Workers. O repositório europeu não é alterado.
+Versão brasileira da base `douglasc-c/edg-ecommerce` (atualizada até o commit `0ad24e88210fcbb349edb977412ef0dbe4a6e2c8`), com checkout **InfinitePay**, moeda **BRL**, NF-e brasileira e configuração própria para Cloudflare Workers. O repositório europeu não é alterado.
+
+A sincronização traz a vitrine, as páginas Skate/Música, a navegação móvel, os idiomas, as imagens de categoria, a exclusão segura de catálogo, as variantes por cor/tamanho e as correções de e-mail da base espanhola. Consulte [ATUALIZACAO_BRASIL.md](ATUALIZACAO_BRASIL.md) para a comparação, as migrações e os limites operacionais.
+
+Os padrões da operação são Brasil: BRL, português, InfinitePay, Melhor Envio e NF-e. Os módulos EUR/Stripe/Sendcloud herdados permanecem desativados no Worker brasileiro. O seletor de idioma não muda o país nem o provedor.
 
 ## Funcionalidades
 
-- Vitrine, busca, categorias e tamanhos por categoria, fotos e carrinho.
+- Vitrine atualizada, Skate/Música, busca, imagens de categoria e carrinho.
+- Variantes por cor e tamanho, com SKU, fotos, estoque e reservas independentes.
+- Termos, privacidade LGPD e devoluções com regras brasileiras.
+- Identificação do fornecedor no rodapé e checkout; termos da compra para download.
+- Atendimento, arrependimento e pedidos LGPD com protocolo e resposta na conta.
 - Gestão de produtos, entradas/saídas de estoque, reservas e alertas de saldo.
 - Cupons, pedidos, financeiro, expedição e rastreio.
 - Usuários com perfis de administrador, estoque, financeiro, expedição e atendimento.
@@ -18,6 +26,8 @@ Versão brasileira da base `douglasc-c/edg-ecommerce` (commit `1fa687e`), com ch
 ## Começar pelo catálogo
 
 A configuração do Worker começa com `COMMERCE_MODE=catalog`, `STORE_CURRENCY=BRL` e `PAYMENT_PROVIDER=infinitepay`. Permite organizar a operação sem aceitar vendas até finalizar a configuração.
+
+As vendas em produção exigem `STORE_LEGAL_NAME`, `STORE_DOCUMENT`, `STORE_ADDRESS` e `SUPPORT_EMAIL`. Configure dados reais da operação brasileira.
 
 Para publicar e ativar pagamentos, siga [CLOUDFLARE.md](CLOUDFLARE.md).
 

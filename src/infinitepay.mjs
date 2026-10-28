@@ -14,7 +14,7 @@ export function infinitepay(config,fetcher=fetch){
       configured();
       const discounts=allocateCents(order.discount||0,items.map(p=>p.price*p.quantity));
       // Group quantities into one line to allocate every cent of a coupon exactly.
-      const lines=items.map((p,i)=>({quantity:1,price:p.price*p.quantity-discounts[i],description:`${p.quantity} × ${p.name}`})).filter(p=>p.price>0);
+      const lines=items.map((p,i)=>({quantity:1,price:p.price*p.quantity-discounts[i],description:`${p.quantity} × ${[p.name,p.selected_color,p.selected_size].filter(Boolean).join(' · ')}`})).filter(p=>p.price>0);
       if(order.shipping)lines.push({quantity:1,price:order.shipping,description:'Frete'});
       requireThat(lines.reduce((sum,p)=>sum+p.price*p.quantity,0)===order.total,409,'Total do checkout divergente.');
       const address=typeof order.address==='string'?JSON.parse(order.address):order.address;

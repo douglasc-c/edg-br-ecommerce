@@ -1,3 +1,5 @@
+> Atualização Brasil: preserve este Worker e seus dados. Veja [ATUALIZACAO_BRASIL.md](ATUALIZACAO_BRASIL.md). Configure `STORE_LEGAL_NAME`, `STORE_DOCUMENT`, `STORE_ADDRESS`, `SUPPORT_EMAIL` e `PRIVACY_EMAIL` antes de ativar vendas. Os módulos e dados bancários espanhóis não devem ser copiados para a operação brasileira.
+
 # EDG Brasil no Cloudflare
 
 ## Publicar catálogo e estoque
