@@ -8,7 +8,16 @@ import { campaignVideoPaths, campaignVideoResponse } from '../src/video-response
 import { normalizeCountry } from '../src/language.mjs';
 import { commerceStoreName } from './store-selection.mjs';
 
-const storeUnavailable=()=>Response.json({error:'A loja está indisponível no momento. Tente novamente mais tarde.'},{status:503,headers:{'Content-Language':'pt-BR','Cache-Control':'no-store'}});
+const storeUnavailable=(code='STORE_UNAVAILABLE')=>Response.json({error:'A loja está indisponível no momento. Tente novamente mais tarde.',code},{status:503,headers:{'Content-Language':'pt-BR','Cache-Control':'no-store'}});
+function startupErrorCode(stage,error){
+  if(stage==='configuration'){
+    // Apenas nomes conhecidos, nunca a mensagem interna ou valores dos bindings.
+    const fields=['APP_URL','COMMERCE_MODE','STORE_DEFAULT_LANGUAGE','STORE_CURRENCY','PAYMENT_PROVIDER','SHIPPING_PROVIDER','INFINITEPAY_HANDLE','INTEGRATIONS_ENCRYPTION_KEY','MELHOR_ENVIO_CLIENT_ID','EMAIL_ENCRYPTION_KEY','NFE_ENVIRONMENT','RESERVATION_MINUTES','EUROPE_CHECKOUT_ENABLED','PAYMENT_ENVIRONMENT','SENDCLOUD_ENVIRONMENT'];
+    const field=fields.find(name=>String(error?.message||'').includes(name));
+    return field?'CONFIG_'+field:'CONFIG_INVALID';
+  }
+  return {database:'STORE_DATABASE',administrator:'STORE_ADMIN_SETUP',application:'STORE_INITIALIZATION'}[stage]||'STORE_UNAVAILABLE';
+}
 
 // Un objeto estable es propietario de la base de datos de esta tienda. Nunca se deriva su nombre de la entrada del usuario.
 export class CommerceStore extends DurableObject {
@@ -16,9 +25,12 @@ export class CommerceStore extends DurableObject {
   async initialize(){
     if(this.app)return;
     if(!this.initializing)this.initializing=(async()=>{
+      this.startupStage='configuration';
       // Leia os bindings diretamente; copiar env depende de propriedades enumeráveis.
       const config=configuration(this.env,{production:true});
+      this.startupStage='database';
       const db=durableDatabase(this.ctx.storage);
+      this.startupStage='administrator';
       if(!db.prepare("SELECT id FROM users WHERE role='admin' AND active=1").get()){
         if(!this.env.ADMIN_EMAIL || !this.env.ADMIN_PASSWORD)throw new Error('Configura ADMIN_EMAIL y ADMIN_PASSWORD.');
         const address=email(this.env.ADMIN_EMAIL);
@@ -26,7 +38,9 @@ export class CommerceStore extends DurableObject {
         const pwd=await passwordHash(this.env.ADMIN_PASSWORD);
         db.prepare('INSERT INTO users(id,name,email,password,role,created_at) VALUES(?,?,?,?,?,?)').run(randomUUID(),'Administrador EDG',address,pwd,'admin',now());
       }
+      this.startupStage='application';
       this.app=createApp({db,config,runtime:'worker'});
+      this.startupStage='ready';
     })().catch(error=>{this.initializing=null;throw error;});
     await this.initializing;
   }
@@ -47,7 +61,7 @@ export class CommerceStore extends DurableObject {
         this.ctx.waitUntil(this.app.recovery.flush().catch(()=>console.error('Error en el mantenimiento de correos')));
       }
       return result;
-    }catch(error){console.error('Tienda no disponible:',error.message);return storeUnavailable();}
+    }catch(error){console.error('Tienda no disponible:',error.message);return storeUnavailable(startupErrorCode(this.startupStage,error));}
   }
   async maintenance(){await this.initialize();this.app.shop.expire();await this.app.recovery.flush();await this.app.logistics.maintain();}
 }
@@ -62,7 +76,7 @@ export default {
       headers.delete('x-edg-country');
       if(country)headers.set('x-edg-country',country);
       try{return await env.STORE.getByName(commerceStoreName(env)).fetch(new Request(request,{headers}));}
-      catch(error){console.error('No se ha podido acceder a la tienda:',error.message);return storeUnavailable();}
+      catch(error){console.error('No se ha podido acceder a la tienda:',error.message);return storeUnavailable('STORE_BINDING_UNAVAILABLE');}
     }
     const campaignVideo=campaignVideoPaths.has(path)&&['GET','HEAD'].includes(request.method);
     let assetRequest=request;

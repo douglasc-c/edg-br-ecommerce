@@ -23,13 +23,20 @@ try{
     const unavailable=await mf.dispatchFetch(origin+'/api/config');
     assert.equal(unavailable.status,503);
     assert.match(unavailable.headers.get('content-type'),/application\/json/);
-    assert.match((await unavailable.json()).error,/indisponível/);
+    const failure=await unavailable.json();assert.match(failure.error,/indisponível/);assert.equal(failure.code,'CONFIG_APP_URL');
   }
   await mf.dispose();
   mf=create({...options,bindings:{...options.bindings,ADMIN_PASSWORD:''}});
   const missingAdmin=await mf.dispatchFetch(origin+'/api/config');
   assert.equal(missingAdmin.status,503);
-  assert.match((await missingAdmin.json()).error,/indisponível/);
+  const adminFailure=await missingAdmin.json();assert.match(adminFailure.error,/indisponível/);assert.equal(adminFailure.code,'STORE_ADMIN_SETUP');
+  await mf.dispose();
+  const invalidKey='private-fixture-invalid-key';
+  mf=create({...options,bindings:{...options.bindings,INTEGRATIONS_ENCRYPTION_KEY:invalidKey}});
+  const invalidConfiguration=await mf.dispatchFetch(origin+'/api/config');
+  assert.equal(invalidConfiguration.status,503);
+  const invalidBody=await invalidConfiguration.text();assert.ok(!invalidBody.includes(invalidKey));
+  const keyFailure=JSON.parse(invalidBody);assert.equal(keyFailure.code,'CONFIG_INTEGRATIONS_ENCRYPTION_KEY');assert.deepEqual(Object.keys(keyFailure).sort(),['code','error']);
   await mf.dispose();
   mf=create(options);
   let auth={};
