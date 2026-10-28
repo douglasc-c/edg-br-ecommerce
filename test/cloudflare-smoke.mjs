@@ -22,13 +22,13 @@ try{
     const unavailable=await mf.dispatchFetch(origin+'/api/config');
     assert.equal(unavailable.status,503);
     assert.match(unavailable.headers.get('content-type'),/application\/json/);
-    assert.match((await unavailable.json()).error,/APP_URL/);
+    assert.match((await unavailable.json()).error,/indisponível/);
   }
   await mf.dispose();
   mf=create({...options,bindings:{...options.bindings,ADMIN_PASSWORD:''}});
   const missingAdmin=await mf.dispatchFetch(origin+'/api/config');
   assert.equal(missingAdmin.status,503);
-  assert.match((await missingAdmin.json()).error,/ADMIN_PASSWORD/);
+  assert.match((await missingAdmin.json()).error,/indisponível/);
   await mf.dispose();
   mf=create(options);
   let auth={};
@@ -56,7 +56,7 @@ try{
   await mf.dispose();
   let confirmedTotal=0;
   const webhookToken='b'.repeat(64);
-  mf=create({...options,bindings:{...options.bindings,COMMERCE_MODE:'live',PAYMENT_PROVIDER:'infinitepay',INFINITEPAY_HANDLE:'edg-br-test',INFINITEPAY_WEBHOOK_TOKEN:webhookToken,MELHOR_ENVIO_CLIENT_ID:'1234',MELHOR_ENVIO_CLIENT_SECRET:'workers-oauth-secret',INTEGRATIONS_ENCRYPTION_KEY:'a'.repeat(64),MELHOR_ENVIO_SANDBOX:'false',ORIGIN_POSTAL_CODE:'80010000',SUPPORT_EMAIL:'support@example.test'},outboundService:async request=>{
+  mf=create({...options,bindings:{...options.bindings,STORE_LEGAL_NAME:'Fornecedor de teste',STORE_DOCUMENT:'00000000000000',STORE_ADDRESS:'Endereço de teste',COMMERCE_MODE:'live',PAYMENT_PROVIDER:'infinitepay',INFINITEPAY_HANDLE:'edg-br-test',INFINITEPAY_WEBHOOK_TOKEN:webhookToken,MELHOR_ENVIO_CLIENT_ID:'1234',MELHOR_ENVIO_CLIENT_SECRET:'workers-oauth-secret',INTEGRATIONS_ENCRYPTION_KEY:'a'.repeat(64),MELHOR_ENVIO_SANDBOX:'false',ORIGIN_POSTAL_CODE:'80010000',SUPPORT_EMAIL:'support@example.test'},outboundService:async request=>{
     const url=new URL(request.url);
     if(url.origin==='https://melhorenvio.com.br' && url.pathname==='/oauth/token')return Response.json({token_type:'Bearer',access_token:'workers-access-token',refresh_token:'workers-refresh-token',expires_in:2592000});
     if(url.hostname==='www.melhorenvio.com.br'){assert.equal(request.headers.get('authorization'),'Bearer workers-access-token');return Response.json([{id:1,name:'PAC',price:'19.90',delivery_time:7}]);}
@@ -71,7 +71,7 @@ try{
   assert.equal(callback.status,303);assert.equal((await call('/api/admin/integrations/melhorenvio')).data.connected,true);
   assert.equal((await call(`/api/cart/${id}`,'PUT',{quantity:1})).r.status,200);
   const quote=(await call('/api/shipping/quote','POST',{postal_code:'80010000'})).data;
-  const order=(await call('/api/checkout','POST',{quote_id:quote.id,service_id:quote.options[0].id,address:{name:'Admin',phone:'41999999999',document:'12345678901',postal_code:'80010000',street:'Rua A',number:'10',district:'Centro',city:'Curitiba',state:'PR'}},{'Idempotency-Key':'workers-infinitepay-test-order'})).data;
+  const order=(await call('/api/checkout','POST',{quote_id:quote.id,service_id:quote.options[0].id,terms_accepted:true,address:{name:'Admin',phone:'41999999999',document:'12345678901',postal_code:'80010000',street:'Rua A',number:'10',district:'Centro',city:'Curitiba',state:'PR'}},{'Idempotency-Key':'workers-infinitepay-test-order'})).data;
   assert.equal(order.payment_provider,'infinitepay',JSON.stringify(order));confirmedTotal=order.total;
   const payload={order_nsu:order.id,invoice_slug:'test-invoice',transaction_nsu:'workers-test-transaction'};
   assert.equal((await call('/api/webhooks/infinitepay','POST',payload)).r.status,401);

@@ -7,6 +7,7 @@
     "nodejs_compat"
   ],
   "workers_dev": true,
+  "keep_vars": true,
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
@@ -42,6 +43,8 @@
     "STORE_NAME": "EDG Brasil",
     "STORE_CURRENCY": "BRL",
     "PAYMENT_PROVIDER": "infinitepay",
+    "SHIPPING_PROVIDER": "melhorenvio",
+    "EUROPE_CHECKOUT_ENABLED": "false",
     "MELHOR_ENVIO_SANDBOX": "false"
   },
   "observability": {
