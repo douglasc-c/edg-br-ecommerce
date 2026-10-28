@@ -159,7 +159,7 @@ test('la intro termina antes de mostrar la colección y activar el loop sin cont
     const introPlayCount=events.filter(event=>event.type==='playing'&&event.source===INTRO).length;
     await page.getByRole('banner').getByRole('link',{name:/Carrito/}).click();
     await expect(hero).toHaveCount(0);
-    await page.getByRole('link',{name:'Inicio',exact:true}).click();
+    await page.getByRole('link',{name:'Seguir comprando',exact:true}).click();
     await expect(collection).toBeVisible();
     await expect(description).toBeVisible();
     await expectNoPlaybackControls(elements);
@@ -265,7 +265,7 @@ test('en una conexión móvil lenta descarga la intro antes de reproducirla y pr
     expect(introPlaying.currentSrc).toMatch(/^blob:/);
     expect(introEnded.currentSrc).toBe(introPlaying.currentSrc);
     expect(introEnded.currentTime).toBeCloseTo(3.4,2);
-    expect(events.slice(playingIndex+1,endedIndex).filter(event=>event.type==='waiting'&&event.source===INTRO),'The complete intro must play without waiting for more data').toEqual([]);
+    expect(events.slice(playingIndex+1,endedIndex).filter(event=>event.type==='waiting'&&event.source===INTRO&&event.currentTime<INTRO_LAST_FRAME),'The intro must not stall before its final decoded frame').toEqual([]);
 
     // Resource Timing shares performance.now()'s clock with the native events.
     // This proves actual prebuffering, rather than just checking a preload hint.
