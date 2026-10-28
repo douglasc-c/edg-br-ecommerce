@@ -43,6 +43,10 @@ Se aparecer `Unexpected token '<'` ou erro 1101, abra `/api/config` no mesmo end
 
 Salve/publique as alterações e consulte os logs do Worker se o erro continuar. O catálogo não exige credenciais de pagamento ou frete. Falhas de configuração devem retornar HTTP 503 em JSON; erros de inicialização também ficam registrados nos logs. Não recrie o armazenamento para corrigir uma configuração.
 
+`APP_URL`, `COMMERCE_MODE` e `STORE_DEFAULT_LANGUAGE` estão definidos em `vars` no `wrangler.jsonc`, para que a publicação pelo GitHub tenha uma configuração básica completa. Ao adotar um domínio próprio, atualize também `APP_URL` nesse arquivo: valores declarados no Wrangler prevalecem no próximo deploy. Os secrets existentes continuam no Cloudflare.
+
+Nos logs, a falha de produção identifica o campo: `APP_URL` sem HTTPS, `COMMERCE_MODE` incompatível ou a lista de configurações pendentes do modo `live`. Nenhum valor de credencial é incluído nessas mensagens. `PT-BR` e espaços ao redor do idioma são normalizados para `pt-BR`. Se o painel estiver correto e ainda houver falha, verifique a versão ativa em Deployments e consulte um evento recente; registros anteriores à publicação não refletem as variáveis atuais.
+
 ## Ativar InfinitePay e frete real
 
 1. Na sua conta InfinitePay, habilite **Checkout Integrado**.

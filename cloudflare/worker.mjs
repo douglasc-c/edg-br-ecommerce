@@ -16,7 +16,8 @@ export class CommerceStore extends DurableObject {
   async initialize(){
     if(this.app)return;
     if(!this.initializing)this.initializing=(async()=>{
-      const config=configuration({...this.env,NODE_ENV:'production'});
+      // Leia os bindings diretamente; copiar env depende de propriedades enumeráveis.
+      const config=configuration(this.env,{production:true});
       const db=durableDatabase(this.ctx.storage);
       if(!db.prepare("SELECT id FROM users WHERE role='admin' AND active=1").get()){
         if(!this.env.ADMIN_EMAIL || !this.env.ADMIN_PASSWORD)throw new Error('Configura ADMIN_EMAIL y ADMIN_PASSWORD.');

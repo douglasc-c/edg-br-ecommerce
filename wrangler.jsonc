@@ -39,8 +39,10 @@
     ]
   },
   "vars": {
+    "APP_URL": "https://edg-br-ecommerce.douglas-camargo-ltda.workers.dev",
     "COMMERCE_MODE": "catalog",
     "STORE_NAME": "EDG Brasil",
+    "STORE_DEFAULT_LANGUAGE": "pt-BR",
     "STORE_CURRENCY": "BRL",
     "PAYMENT_PROVIDER": "infinitepay",
     "SHIPPING_PROVIDER": "melhorenvio",
