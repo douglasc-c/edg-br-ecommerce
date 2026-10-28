@@ -47,6 +47,8 @@ Salve/publique as alterações e consulte os logs do Worker se o erro continuar.
 
 Nos logs, a falha de produção identifica o campo: `APP_URL` sem HTTPS, `COMMERCE_MODE` incompatível ou a lista de configurações pendentes do modo `live`. Nenhum valor de credencial é incluído nessas mensagens. `PT-BR` e espaços ao redor do idioma são normalizados para `pt-BR`. Se o painel estiver correto e ainda houver falha, verifique a versão ativa em Deployments e consulte um evento recente; registros anteriores à publicação não refletem as variáveis atuais.
 
+A resposta HTTP 503 de `/api/health` ou `/api/config` também contém um `code` seguro: `CONFIG_APP_URL`, `CONFIG_COMMERCE_MODE` ou outro campo de configuração conhecido; `STORE_DATABASE` indica a inicialização do banco; `STORE_ADMIN_SETUP`, o administrador inicial; `STORE_INITIALIZATION`, a criação da aplicação; e `STORE_BINDING_UNAVAILABLE`, o acesso ao Durable Object. Esses códigos permitem localizar a etapa da falha sem divulgar mensagens internas, SQL ou valores de secrets. A mensagem detalhada permanece nos logs privados do Worker.
+
 ## Ativar InfinitePay e frete real
 
 1. Na sua conta InfinitePay, habilite **Checkout Integrado**.
