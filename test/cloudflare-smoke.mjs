@@ -11,9 +11,10 @@ const origin='https://store.example.test',password='Smoke-Test-Password-2026';
 let mf;
 try{
   execFileSync(process.execPath,['node_modules/wrangler/bin/wrangler.js','deploy','--dry-run','--outdir',directory],{stdio:'pipe'});
+  const deployedVars=JSON.parse(await readFile(resolve('wrangler.jsonc'),'utf8')).vars;
   const options={name:"edg-test",modulesRoot:directory,modules:true,scriptPath:join(directory,'worker.js'),compatibilityDate:'2026-01-01',compatibilityFlags:['nodejs_compat'],cf:false,host:'127.0.0.1',port:0,
     durableObjects:{STORE:{className:'CommerceStore',useSQLite:true}},durableObjectsPersist:join(directory,'storage'),
-    bindings:{APP_URL:origin,COMMERCE_MODE:'catalog',STORE_CURRENCY:'BRL',ADMIN_EMAIL:'admin@example.test',ADMIN_PASSWORD:password},
+    bindings:{...deployedVars,APP_URL:origin,STORE_DEFAULT_LANGUAGE:' PT-BR ',ADMIN_EMAIL:'admin@example.test',ADMIN_PASSWORD:password},
     serviceBindings:{ASSETS:async request=>new Response(await readFile(resolve('public',new URL(request.url).pathname==='/'?'index.html':new URL(request.url).pathname.slice(1))))}};
   const create=opts=>new Miniflare({...convertV4MiniflareOptions(opts),resourcePersistencePath:join(directory,"storage")});
   // Missing deployment configuration must return JSON, never reset the object (1101).
@@ -37,6 +38,7 @@ try{
     const data=await r.json();return {r,data};
   }
   let result=await call('/api/config');assert.equal(result.r.status,200,JSON.stringify(result.data));assert.equal(result.data.mode,'catalog');assert.equal(result.data.currency,'BRL');assert.equal(result.data.checkout_enabled,false);
+  assert.equal(result.data.default_language,'pt-BR');assert.equal((await call('/api/health')).r.status,200);
   assert.equal((await call('/api/admin/products')).r.status,401);
   const login=await call('/api/auth/login','POST',{email:'admin@example.test',password});assert.equal(login.r.status,200,JSON.stringify(login.data));assert.match(login.r.headers.get('set-cookie'),/Secure/);
   auth={Cookie:login.r.headers.get('set-cookie').split(';')[0],'X-CSRF-Token':login.data.csrf};

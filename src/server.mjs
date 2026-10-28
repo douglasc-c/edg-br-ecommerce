@@ -18,8 +18,8 @@ import { stripeProvider } from './stripe.mjs';
 import { campaignVideoPaths, campaignVideoResponse } from './video-response.mjs';
 import { suggestLanguage } from './language.mjs';
 import { HttpError, requireThat, text, integer, email, postal, passwordHash, passwordMatches, roles, permissions, token, hash, now } from './security.mjs';
-export function configuration(env=process.env) {
-  const c={url:(env.APP_URL||'http://localhost:3000').replace(/\/$/,''),mode:env.COMMERCE_MODE||'demo',production:env.NODE_ENV==='production',reservationMinutes:Number(env.RESERVATION_MINUTES||30),storeName:env.STORE_NAME||'EDG Commerce',mpToken:env.MERCADO_PAGO_ACCESS_TOKEN,mpSecret:env.MERCADO_PAGO_WEBHOOK_SECRET,collectorId:env.MERCADO_PAGO_COLLECTOR_ID,meToken:env.MELHOR_ENVIO_TOKEN,meSecret:env.MELHOR_ENVIO_WEBHOOK_SECRET,meSandbox:env.MELHOR_ENVIO_SANDBOX!=='false',originPostal:env.ORIGIN_POSTAL_CODE,supportEmail:env.SUPPORT_EMAIL,shippingFrom:env.SHIPPING_FROM_JSON?JSON.parse(env.SHIPPING_FROM_JSON):null};
+export function configuration(env=process.env,{production=env.NODE_ENV==='production'}={}) {
+  const c={url:String(env.APP_URL||'http://localhost:3000').trim().replace(/\/$/,''),mode:String(env.COMMERCE_MODE||'demo').trim().toLowerCase(),production,reservationMinutes:Number(env.RESERVATION_MINUTES||30),storeName:env.STORE_NAME||'EDG Commerce',mpToken:env.MERCADO_PAGO_ACCESS_TOKEN,mpSecret:env.MERCADO_PAGO_WEBHOOK_SECRET,collectorId:env.MERCADO_PAGO_COLLECTOR_ID,meToken:env.MELHOR_ENVIO_TOKEN,meSecret:env.MELHOR_ENVIO_WEBHOOK_SECRET,meSandbox:env.MELHOR_ENVIO_SANDBOX!=='false',originPostal:env.ORIGIN_POSTAL_CODE,supportEmail:env.SUPPORT_EMAIL,shippingFrom:env.SHIPPING_FROM_JSON?JSON.parse(env.SHIPPING_FROM_JSON):null};
   Object.assign(c,{resendKey:env.RESEND_API_KEY,emailFrom:env.EMAIL_FROM,emailKey:env.EMAIL_ENCRYPTION_KEY,nfeToken:env.FOCUS_NFE_TOKEN,nfeEnvironment:env.NFE_ENVIRONMENT||'homologation',nfeEmitter:env.NFE_EMITTER_JSON?JSON.parse(env.NFE_EMITTER_JSON):null,nfeDefaults:env.NFE_DEFAULTS_JSON?JSON.parse(env.NFE_DEFAULTS_JSON):null});
   Object.assign(c,{paymentProvider:env.PAYMENT_PROVIDER||'infinitepay',infiniteHandle:env.INFINITEPAY_HANDLE,infiniteWebhookToken:env.INFINITEPAY_WEBHOOK_TOKEN});
   Object.assign(c,{meClientId:env.MELHOR_ENVIO_CLIENT_ID,meClientSecret:env.MELHOR_ENVIO_CLIENT_SECRET,integrationsKey:env.INTEGRATIONS_ENCRYPTION_KEY});
@@ -32,8 +32,28 @@ export function configuration(env=process.env) {
   requireThat(!c.emailKey || /^[a-f0-9]{64}$/i.test(c.emailKey),500,'EMAIL_ENCRYPTION_KEY deve ter 32 bytes em hexadecimal.');
   requireThat(['demo','catalog','live'].includes(c.mode),500,'COMMERCE_MODE deve ser demo, catalog ou live.');
   requireThat(Number.isInteger(c.reservationMinutes) && c.reservationMinutes>=5 && c.reservationMinutes<=1440,500,'RESERVATION_MINUTES inválido.');
-  const u=new URL(c.url); requireThat(['http:','https:'].includes(u.protocol) && u.pathname==='/' && !u.search && !u.hash && !u.username && !u.password,500,'APP_URL deve ser uma origem HTTP válida.');
-  if(c.production) requireThat(u.protocol==='https:' && (c.mode==='catalog' || (c.mode==='live' && (c.paymentProvider==='infinitepay'?(c.infiniteHandle && c.infiniteWebhookToken?.length>=32):(c.mpToken && c.mpSecret && c.collectorId)) && (c.meToken || (c.meClientId && c.meClientSecret && c.integrationsKey)) && c.originPostal && c.supportEmail && !c.meSandbox)),500,'Produção exige HTTPS e modo catalog ou modo live com credenciais completas.');
+  let u;try{u=new URL(c.url);}catch{throw new HttpError(500,'APP_URL deve ser uma origem HTTP válida.');}
+  requireThat(['http:','https:'].includes(u.protocol) && u.pathname==='/' && !u.search && !u.hash && !u.username && !u.password,500,'APP_URL deve ser uma origem HTTP válida.');
+  if(c.production){
+    requireThat(u.protocol==='https:',500,'Produção exige APP_URL configurada com uma origem HTTPS.');
+    requireThat(c.mode==='catalog'||c.mode==='live',500,'Produção exige COMMERCE_MODE=catalog ou live.');
+    if(c.mode==='live'){
+      const pending=[];
+      if(c.paymentProvider==='infinitepay'){
+        if(!c.infiniteHandle)pending.push('INFINITEPAY_HANDLE');
+        if(!(c.infiniteWebhookToken?.length>=32))pending.push('INFINITEPAY_WEBHOOK_TOKEN (mínimo de 32 caracteres)');
+      }else{
+        if(!c.mpToken)pending.push('MERCADO_PAGO_ACCESS_TOKEN');
+        if(!c.mpSecret)pending.push('MERCADO_PAGO_WEBHOOK_SECRET');
+        if(!c.collectorId)pending.push('MERCADO_PAGO_COLLECTOR_ID');
+      }
+      if(!(c.meToken||(c.meClientId&&c.meClientSecret&&c.integrationsKey)))pending.push('MELHOR_ENVIO_TOKEN ou MELHOR_ENVIO_CLIENT_ID + MELHOR_ENVIO_CLIENT_SECRET + INTEGRATIONS_ENCRYPTION_KEY');
+      if(!c.originPostal)pending.push('ORIGIN_POSTAL_CODE');
+      if(!c.supportEmail)pending.push('SUPPORT_EMAIL');
+      if(c.meSandbox)pending.push('MELHOR_ENVIO_SANDBOX=false');
+      requireThat(pending.length===0,500,'Produção em COMMERCE_MODE=live exige configurar: '+pending.join(', ')+'.');
+    }
+  }
   requireThat(['BRL','EUR'].includes(env.STORE_CURRENCY||'BRL'),500,'STORE_CURRENCY inválida.');
   c.currency=env.STORE_CURRENCY||'BRL';
   c.shippingProvider=env.SHIPPING_PROVIDER||(c.currency==='EUR'?'sendcloud':'melhorenvio');
@@ -62,7 +82,8 @@ export function configuration(env=process.env) {
     requireThat(remainder===1,500,'BANK_TRANSFER_IBAN no supera la validación de control.');
   }
   if(c.mode!=='catalog')requireThat(c.currency==='BRL',500,'Para EUR utiliza COMMERCE_MODE=catalog y EUROPE_CHECKOUT_ENABLED.');
-  c.defaultLanguage=env.STORE_DEFAULT_LANGUAGE||'pt-BR';
+  const language=String(env.STORE_DEFAULT_LANGUAGE||'pt-BR').trim().toLowerCase();
+  c.defaultLanguage=language==='pt-br'?'pt-BR':language;
   requireThat(['pt-BR','es','en'].includes(c.defaultLanguage),500,'STORE_DEFAULT_LANGUAGE inválido.');
   c.seller=sellerInfo(env);
   if(c.production&&c.mode==='live'&&c.currency==='BRL')validateSeller(c.seller);
